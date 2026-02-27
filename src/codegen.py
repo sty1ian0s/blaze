@@ -1,37 +1,34 @@
 #!/usr/bin/env python3.14
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Blaze code generator – translates AST to LLVM IR.
-"""
-
 from typing import List, Optional
 
 from src.blaze_ast import (
     Assign,
     BinaryOp,
+    Break,
     Call,
+    Continue,
     Function,
+    If,
     IntLiteral,
     Let,
+    Loop,
     Module,
     Name,
     Node,
     Param,
     Return,
     Var,
+    While,
 )
 
 
 class CodeGenError(Exception):
-    """Raised when code generation fails."""
-
     pass
 
 
 class CodeGen:
-    """Generates LLVM IR from an AST."""
-
     def __init__(self):
         self.output = []
         self.indent_level = 0
@@ -40,6 +37,7 @@ class CodeGen:
         self.functions = set()
         self.alloca_counter = 0
         self.label_counter = 0
+        self.blocks = []  # stack of (loop_header, loop_exit, loop_label) for break/continue
 
     def indent(self):
         self.indent_level += 1
@@ -92,6 +90,14 @@ class CodeGen:
         elif isinstance(node, Function):
             for stmt in node.body:
                 count += self.count_prints(stmt)
+        elif isinstance(node, If):
+            for stmt in node.then_body:
+                count += self.count_prints(stmt)
+            for stmt in node.else_body:
+                count += self.count_prints(stmt)
+        elif isinstance(node, While) or isinstance(node, Loop):
+            for stmt in node.body:
+                count += self.count_prints(stmt)
         elif hasattr(node, "args") and isinstance(node.args, list):
             for arg in node.args:
                 if isinstance(arg, Node):
@@ -111,6 +117,7 @@ class CodeGen:
         self.functions = set()
         self.alloca_counter = 0
         self.label_counter = 0
+        self.blocks = []
 
         self.emit("; ModuleID = 'blaze_module'")
         self.emit('target triple = "x86_64-unknown-linux-gnu"')
@@ -121,7 +128,6 @@ class CodeGen:
         if not isinstance(node, Module):
             raise CodeGenError("Root node must be Module")
 
-        # Emit format strings for all println calls
         println_count = self.count_prints(node)
         for i in range(println_count):
             fmt_name = f"fmt.{i}"
@@ -134,7 +140,6 @@ class CodeGen:
         if println_count > 0:
             self.emit()
 
-        # Separate functions from top-level statements
         functions = []
         top_level_stmts = []
         for item in node.body:
@@ -192,9 +197,7 @@ class CodeGen:
                 if last_expr_reg is not None:
                     self.emit(f"ret i32 %{last_expr_reg}")
                 else:
-                    self.emit(
-                        "ret i32 0"
-                    )  # fallback (should not happen if semantic correct)
+                    self.emit("ret i32 0")
             else:
                 self.emit("ret void")
 
@@ -219,11 +222,135 @@ class CodeGen:
             self.gen_println(node)
             return None
         elif isinstance(node, Call):
-            # Regular call that may return a value
             return self.gen_call(node)
+        elif isinstance(node, If):
+            # If as statement – generate without phi
+            self.gen_if_stmt(node)
+            return None
+        elif isinstance(node, While):
+            self.gen_while(node)
+            return None
+        elif isinstance(node, Loop):
+            self.gen_loop(node)
+            return None
+        elif isinstance(node, Break):
+            self.gen_break(node)
+            return None
+        elif isinstance(node, Continue):
+            self.gen_continue(node)
+            return None
         else:
-            # Any other expression (BinaryOp, IntLiteral, Name)
             return self.gen_expression(node)
+
+    def gen_if_stmt(self, node: If):
+        """Generate an if statement (no value, no phi)."""
+        cond_reg = self.gen_expression(node.cond)
+        then_label = self.fresh_label("then")
+        else_label = self.fresh_label("else")
+        merge_label = self.fresh_label("merge")
+
+        cmp_reg = f"cmp.{self.alloca_counter}"
+        self.alloca_counter += 1
+        self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
+        self.emit(f"br i1 %{cmp_reg}, label %{then_label}, label %{else_label}")
+
+        # Then block
+        self.emit(f"{then_label}:")
+        self.indent()
+        for stmt in node.then_body:
+            self.gen_statement(stmt)
+        # Branch to merge (if not already terminated by break/continue/return)
+        if not self._block_terminated():
+            self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        # Else block
+        self.emit(f"{else_label}:")
+        self.indent()
+        for stmt in node.else_body:
+            self.gen_statement(stmt)
+        if not self._block_terminated():
+            self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        # Merge block (only needed if both branches don't terminate)
+        if not self._all_branches_terminated(node):
+            self.emit(f"{merge_label}:")
+        else:
+            # If both branches terminate (e.g., with return/break), merge is unreachable
+            # We still need to emit it to keep IR valid? Actually if both branches terminate,
+            # we can omit the merge block. We'll add a dummy unreachable block to be safe.
+            self.emit(f"{merge_label}:")
+            self.emit("unreachable")
+
+    def _block_terminated(self) -> bool:
+        """Check if the last emitted statement terminated the block (return/break/continue)."""
+        # Simple check: look at last emitted line
+        if not self.output:
+            return False
+        last = self.output[-1].strip()
+        return last.startswith("ret ") or last.startswith("br label %")
+
+    def _all_branches_terminated(self, node: If) -> bool:
+        """Check if both then and else branches end with a terminator."""
+        # This is a simplification; in practice, we'd need to analyze deeper.
+        # For now, assume not.
+        return False
+
+    def gen_block_expr(self, stmts: List[Node]) -> Optional[str]:
+        """Generate a block and return the register of the last expression if any."""
+        last_reg = None
+        for stmt in stmts:
+            reg = self.gen_statement(stmt)
+            if reg is not None:
+                last_reg = reg
+        return last_reg
+
+    def gen_if_expr(self, node: If) -> str:
+        """Generate an if expression and return the result register."""
+        cond_reg = self.gen_expression(node.cond)
+        then_label = self.fresh_label("then")
+        else_label = self.fresh_label("else")
+        merge_label = self.fresh_label("merge")
+
+        cmp_reg = f"cmp.{self.alloca_counter}"
+        self.alloca_counter += 1
+        self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
+        self.emit(f"br i1 %{cmp_reg}, label %{then_label}, label %{else_label}")
+
+        # Then block
+        self.emit(f"{then_label}:")
+        self.indent()
+        then_reg = self.gen_block_expr(node.then_body)
+        if then_reg is None:
+            # If then block has no value (e.g., just statements), use 0 as placeholder
+            then_reg = f"tmp.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(f"%{then_reg} = add i32 0, 0")
+        self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        # Else block
+        self.emit(f"{else_label}:")
+        self.indent()
+        else_reg = self.gen_block_expr(node.else_body)
+        if else_reg is None:
+            else_reg = f"tmp.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(f"%{else_reg} = add i32 0, 0")
+        self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        # Merge block with phi
+        self.emit(f"{merge_label}:")
+        self.indent()
+        phi_reg = f"phi.{self.alloca_counter}"
+        self.alloca_counter += 1
+        self.emit(
+            f"%{phi_reg} = phi i32 [ %{then_reg}, %{then_label} ], [ %{else_reg}, %{else_label} ]"
+        )
+        self.dedent()
+        return phi_reg
 
     def gen_return(self, node: Return):
         if node.value:
@@ -302,11 +429,79 @@ class CodeGen:
                 self.emit(f"%{reg} = mul i32 %{left}, %{right}")
             elif node.op == "/":
                 self.emit(f"%{reg} = sdiv i32 %{left}, %{right}")
+            elif node.op in ("==", "!=", "<", ">", "<=", ">="):
+                cmp_reg = f"cmp.{self.alloca_counter}"
+                self.alloca_counter += 1
+                if node.op == "==":
+                    self.emit(f"%{cmp_reg} = icmp eq i32 %{left}, %{right}")
+                elif node.op == "!=":
+                    self.emit(f"%{cmp_reg} = icmp ne i32 %{left}, %{right}")
+                elif node.op == "<":
+                    self.emit(f"%{cmp_reg} = icmp slt i32 %{left}, %{right}")
+                elif node.op == ">":
+                    self.emit(f"%{cmp_reg} = icmp sgt i32 %{left}, %{right}")
+                elif node.op == "<=":
+                    self.emit(f"%{cmp_reg} = icmp sle i32 %{left}, %{right}")
+                elif node.op == ">=":
+                    self.emit(f"%{cmp_reg} = icmp sge i32 %{left}, %{right}")
+                self.emit(f"%{reg} = zext i1 %{cmp_reg} to i32")
             else:
                 raise CodeGenError(f"unsupported binary operator {node.op}")
             return reg
         elif isinstance(node, Call):
             reg = self.gen_call(node)
             return reg
+        elif isinstance(node, If):
+            return self.gen_if_expr(node)
         else:
             raise CodeGenError(f"unsupported expression: {type(node).__name__}")
+
+    # --- Control flow generation (statements) ---
+    def gen_while(self, node: While):
+        cond_label = self.fresh_label("while.cond")
+        body_label = self.fresh_label("while.body")
+        exit_label = self.fresh_label("while.exit")
+        self.blocks.append((cond_label, exit_label, node.label))
+        self.emit(f"br label %{cond_label}")
+        self.emit(f"{cond_label}:")
+        self.indent()
+        cond_reg = self.gen_expression(node.cond)
+        cmp_reg = f"cmp.{self.alloca_counter}"
+        self.alloca_counter += 1
+        self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
+        self.emit(f"br i1 %{cmp_reg}, label %{body_label}, label %{exit_label}")
+        self.dedent()
+        self.emit(f"{body_label}:")
+        self.indent()
+        for stmt in node.body:
+            self.gen_statement(stmt)
+        self.emit(f"br label %{cond_label}")
+        self.dedent()
+        self.emit(f"{exit_label}:")
+        self.blocks.pop()
+
+    def gen_loop(self, node: Loop):
+        body_label = self.fresh_label("loop.body")
+        exit_label = self.fresh_label("loop.exit")
+        self.blocks.append((body_label, exit_label, node.label))
+        self.emit(f"br label %{body_label}")
+        self.emit(f"{body_label}:")
+        self.indent()
+        for stmt in node.body:
+            self.gen_statement(stmt)
+        self.emit(f"br label %{body_label}")
+        self.dedent()
+        self.emit(f"{exit_label}:")
+        self.blocks.pop()
+
+    def gen_break(self, node: Break):
+        if not self.blocks:
+            raise CodeGenError("break outside loop")
+        _, exit_label, _ = self.blocks[-1]
+        self.emit(f"br label %{exit_label}")
+
+    def gen_continue(self, node: Continue):
+        if not self.blocks:
+            raise CodeGenError("continue outside loop")
+        header_label, _, _ = self.blocks[-1]
+        self.emit(f"br label %{header_label}")

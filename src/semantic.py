@@ -6,16 +6,21 @@ from typing import Dict, List, Optional
 from src.blaze_ast import (
     Assign,
     BinaryOp,
+    Break,
     Call,
+    Continue,
     Function,
+    If,
     IntLiteral,
     Let,
+    Loop,
     Module,
     Name,
     Node,
     Param,
     Return,
     Var,
+    While,
 )
 
 
@@ -69,6 +74,7 @@ class SemanticAnalyzer:
         self.functions: Dict[str, FuncInfo] = {}
         self.current_function: Optional[FuncInfo] = None
         self.in_function = False
+        self.loop_stack = []  # stack of loop labels
 
     def analyze(self, node: Node) -> Node:
         self.visit(node)
@@ -86,6 +92,12 @@ class SemanticAnalyzer:
         if isinstance(node, Module):
             return node.body
         if isinstance(node, Function):
+            return node.body
+        if isinstance(node, If):
+            return [node.cond] + node.then_body + node.else_body
+        if isinstance(node, While):
+            return [node.cond] + node.body
+        if isinstance(node, Loop):
             return node.body
         if isinstance(node, Let) or isinstance(node, Var) or isinstance(node, Assign):
             return [node.value] if node.value else []
@@ -145,6 +157,48 @@ class SemanticAnalyzer:
         self.current_function = old_func
         self.in_function = bool(old_func)
 
+    def visit_If(self, node: If):
+        self.visit(node.cond)
+        cond_type = self._infer_type(node.cond)
+        if cond_type != "i32":
+            raise SemanticError(
+                f"if condition must be integer, found {cond_type}",
+                node.cond.line,
+                node.cond.col,
+            )
+        for stmt in node.then_body:
+            self.visit(stmt)
+        for stmt in node.else_body:
+            self.visit(stmt)
+
+    def visit_While(self, node: While):
+        self.visit(node.cond)
+        cond_type = self._infer_type(node.cond)
+        if cond_type != "i32":
+            raise SemanticError(
+                f"while condition must be integer, found {cond_type}",
+                node.cond.line,
+                node.cond.col,
+            )
+        self.loop_stack.append(node.label)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.loop_stack.pop()
+
+    def visit_Loop(self, node: Loop):
+        self.loop_stack.append(node.label)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.loop_stack.pop()
+
+    def visit_Break(self, node: Break):
+        if not self.loop_stack:
+            raise SemanticError("break outside loop", node.line, node.col)
+
+    def visit_Continue(self, node: Continue):
+        if not self.loop_stack:
+            raise SemanticError("continue outside loop", node.line, node.col)
+
     def visit_Return(self, node: Return):
         if not self.in_function:
             raise SemanticError("return outside function", node.line, node.col)
@@ -164,7 +218,6 @@ class SemanticAnalyzer:
             )
 
     def visit_Call(self, node: Call):
-        # Special case: println is a built-in function
         if node.func == "println":
             if len(node.args) != 1:
                 raise SemanticError(
@@ -173,8 +226,6 @@ class SemanticAnalyzer:
             for arg in node.args:
                 self.visit(arg)
             return
-
-        # Regular function call
         if node.func not in self.functions:
             raise SemanticError(f"unknown function `{node.func}`", node.line, node.col)
         func = self.functions[node.func]
@@ -294,8 +345,6 @@ class SemanticAnalyzer:
             return left
         if isinstance(node, Call):
             if node.func == "println":
-                # println is a statement, not an expression; if it appears in expression context, that's an error,
-                # but we return "unit" to allow it to type-check (the error will be caught elsewhere).
                 return "unit"
             if node.func not in self.functions:
                 raise SemanticError(
@@ -303,6 +352,27 @@ class SemanticAnalyzer:
                 )
             func = self.functions[node.func]
             return func.return_type if func.return_type else "unit"
+        if isinstance(node, If):
+            # Find the last expression in then branch
+            then_type = "unit"
+            for stmt in node.then_body:
+                if not isinstance(
+                    stmt, (Let, Var, Assign, Return, Break, Continue, If, While, Loop)
+                ):
+                    then_type = self._infer_type(stmt)
+            else_type = "unit"
+            for stmt in node.else_body:
+                if not isinstance(
+                    stmt, (Let, Var, Assign, Return, Break, Continue, If, While, Loop)
+                ):
+                    else_type = self._infer_type(stmt)
+            if then_type != else_type:
+                raise SemanticError(
+                    f"if branches have mismatched types: {then_type} vs {else_type}",
+                    node.line,
+                    node.col,
+                )
+            return then_type
         raise SemanticError(
             f"cannot infer type for {type(node).__name__}", node.line, node.col
         )

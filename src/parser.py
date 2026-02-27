@@ -6,16 +6,21 @@ from typing import List, Optional
 from src.blaze_ast import (
     Assign,
     BinaryOp,
+    Break,
     Call,
+    Continue,
     Function,
+    If,  # new nodes
     IntLiteral,
     Let,
+    Loop,
     Module,
     Name,
     Node,
     Param,
     Return,
     Var,
+    While,
 )
 from src.lexer import Lexer, LexerError, Token, TokenType
 
@@ -31,7 +36,18 @@ class ParseError(Exception):
 
 
 class Parser:
-    PRECEDENCE = {"+": 10, "-": 10, "*": 20, "/": 20}
+    PRECEDENCE = {
+        "==": 5,
+        "!=": 5,
+        "<": 5,
+        ">": 5,
+        "<=": 5,
+        ">=": 5,
+        "+": 10,
+        "-": 10,
+        "*": 20,
+        "/": 20,
+    }
 
     def __init__(self, lexer: Lexer):
         self.lexer = lexer
@@ -138,18 +154,26 @@ class Parser:
         return stmts
 
     def parse_statement(self) -> Node:
-        if (
-            self.current
-            and self.current.type == TokenType.KEYWORD
-            and self.current.value == "return"
-        ):
-            return self.parse_return()
+        # Check for control flow keywords first
         if self.current and self.current.type == TokenType.KEYWORD:
             kw = self.current.value
+            if kw == "if":
+                return self.parse_if()
+            if kw == "while":
+                return self.parse_while()
+            if kw == "loop":
+                return self.parse_loop()
+            if kw == "break":
+                return self.parse_break()
+            if kw == "continue":
+                return self.parse_continue()
+            if kw == "return":
+                return self.parse_return()
             if kw == "let":
                 return self.parse_let()
-            elif kw == "var":
+            if kw == "var":
                 return self.parse_var()
+        # Check for assignment: identifier followed by '=' (skip newlines)
         if self.current and self.current.type == TokenType.IDENT:
             offset = 1
             nxt = self.peek_token(offset)
@@ -158,8 +182,42 @@ class Parser:
                 nxt = self.peek_token(offset)
             if nxt and nxt.type == TokenType.OPERATOR and nxt.value == "=":
                 return self.parse_assign()
+        # Otherwise, parse as expression
         expr = self.parse_expression()
         return expr  # any expression is allowed as a statement
+
+    def parse_if(self) -> If:
+        start = self.consume(TokenType.KEYWORD)  # 'if'
+        cond = self.parse_expression()
+        then_body = self.parse_block()
+        else_body = []
+        if (
+            self.current
+            and self.current.type == TokenType.KEYWORD
+            and self.current.value == "else"
+        ):
+            self.consume(TokenType.KEYWORD)  # 'else'
+            else_body = self.parse_block()
+        return If(cond, then_body, else_body, line=start.line, col=start.col)
+
+    def parse_while(self) -> While:
+        start = self.consume(TokenType.KEYWORD)  # 'while'
+        cond = self.parse_expression()
+        body = self.parse_block()
+        return While(cond, body, line=start.line, col=start.col)
+
+    def parse_loop(self) -> Loop:
+        start = self.consume(TokenType.KEYWORD)  # 'loop'
+        body = self.parse_block()
+        return Loop(body, line=start.line, col=start.col)
+
+    def parse_break(self) -> Break:
+        start = self.consume(TokenType.KEYWORD)  # 'break'
+        return Break(line=start.line, col=start.col)
+
+    def parse_continue(self) -> Continue:
+        start = self.consume(TokenType.KEYWORD)  # 'continue'
+        return Continue(line=start.line, col=start.col)
 
     def parse_return(self) -> Return:
         ret = self.consume(TokenType.KEYWORD)  # 'return'
@@ -232,6 +290,9 @@ class Parser:
         return lhs
 
     def parse_primary(self) -> Node:
+        if self.current and self.current.type == TokenType.KEYWORD:
+            if self.current.value == "if":
+                return self.parse_if()
         if self.current and self.current.type == TokenType.NUMBER:
             tok = self.consume(TokenType.NUMBER)
             try:

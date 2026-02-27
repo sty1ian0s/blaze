@@ -84,6 +84,7 @@ class Lexer:
         "if",
         "import",
         "let",
+        "loop",
         "macro",
         "match",
         "mut",

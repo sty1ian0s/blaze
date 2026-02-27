@@ -197,3 +197,89 @@ class Return(Node):
 
     def __repr__(self):
         return f"Return({self.value!r})"
+
+
+class If(Node):
+    """If expression."""
+
+    __slots__ = ("cond", "then_body", "else_body")
+
+    def __init__(
+        self,
+        cond: Node,
+        then_body: List[Node],
+        else_body: List[Node],
+        line: int = 0,
+        col: int = 0,
+    ):
+        super().__init__(line, col)
+        self.cond = cond
+        self.then_body = then_body
+        self.else_body = else_body
+
+    def __repr__(self):
+        return f"If({self.cond!r}, then=[...], else=[...])"
+
+
+class While(Node):
+    """While loop."""
+
+    __slots__ = ("cond", "body", "label")
+
+    def __init__(
+        self,
+        cond: Node,
+        body: List[Node],
+        label: Optional[str] = None,
+        line: int = 0,
+        col: int = 0,
+    ):
+        super().__init__(line, col)
+        self.cond = cond
+        self.body = body
+        self.label = label
+
+    def __repr__(self):
+        return f"While({self.cond!r}, body=[...], label={self.label!r})"
+
+
+class Loop(Node):
+    """Infinite loop."""
+
+    __slots__ = ("body", "label")
+
+    def __init__(
+        self, body: List[Node], label: Optional[str] = None, line: int = 0, col: int = 0
+    ):
+        super().__init__(line, col)
+        self.body = body
+        self.label = label
+
+    def __repr__(self):
+        return f"Loop(body=[...], label={self.label!r})"
+
+
+class Break(Node):
+    """Break statement."""
+
+    __slots__ = ("label",)
+
+    def __init__(self, label: Optional[str] = None, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.label = label
+
+    def __repr__(self):
+        return f"Break({self.label!r})"
+
+
+class Continue(Node):
+    """Continue statement."""
+
+    __slots__ = ("label",)
+
+    def __init__(self, label: Optional[str] = None, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.label = label
+
+    def __repr__(self):
+        return f"Continue({self.label!r})"
