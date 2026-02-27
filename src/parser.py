@@ -8,7 +8,7 @@ and produces an AST.
 
 from typing import List, Optional
 
-from src.ast import Module, Node
+from src.blaze_ast import Module, Node
 from src.lexer import Lexer, LexerError, Token, TokenType
 
 

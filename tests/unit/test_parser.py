@@ -3,7 +3,7 @@
 
 import unittest
 
-from src.ast import Module
+from src.blaze_ast import Module
 from src.lexer import Lexer
 from src.parser import ParseError, Parser
 
