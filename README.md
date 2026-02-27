@@ -3,12 +3,21 @@
 This is the Python bootstrap compiler for the Blaze programming language.  
 It follows the multi‑stage bootstrapping plan described in `AGENTS.md`.
 
-## Current Status: Phase 0
+## Current Status: Phase 1 – Lexer
 
 - Project structure created.
 - Test harness (`test.py`) and minimal compiler stub (`src/compiler.py`) added.
-- The only integration test (`tests/integration/empty.blz`) expects exit code 0,
-  but the compiler currently fails, so `make test` will report a failure (as expected).
+- **Lexer** implemented with full support for:
+  - All token types (identifiers, numbers, floats, strings, chars, keywords, operators, delimiters, newline, EOF)
+  - Line continuation (operators, comma, unclosed brackets)
+  - Nested block comments and line comments
+  - Integer literals (decimal, hex, binary, octal with underscores)
+  - Float literals (with optional exponent)
+  - String and character escapes (including `\u{XXXX}` Unicode)
+  - Precise error reporting with filename, line, column, and source snippet
+- Unit tests for lexer pass.
+
+Next phase: **Parser** (empty program).
 
 ## License
 
