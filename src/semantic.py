@@ -1,9 +1,11 @@
 #!/usr/bin/env python3.14
 # SPDX-License-Identifier: Apache-2.0
 
+import re
 from typing import Dict, List, Optional
 
 from src.blaze_ast import (
+    ArrayLiteral,
     Assign,
     BinaryOp,
     Break,
@@ -11,6 +13,7 @@ from src.blaze_ast import (
     Continue,
     Function,
     If,
+    Index,
     IntLiteral,
     Let,
     Loop,
@@ -74,7 +77,7 @@ class SemanticAnalyzer:
         self.functions: Dict[str, FuncInfo] = {}
         self.current_function: Optional[FuncInfo] = None
         self.in_function = False
-        self.loop_stack = []  # stack of loop labels
+        self.loop_stack = []
 
     def analyze(self, node: Node) -> Node:
         self.visit(node)
@@ -99,19 +102,24 @@ class SemanticAnalyzer:
             return [node.cond] + node.body
         if isinstance(node, Loop):
             return node.body
-        if isinstance(node, Let) or isinstance(node, Var) or isinstance(node, Assign):
+        if isinstance(node, Let) or isinstance(node, Var):
             return [node.value] if node.value else []
+        if isinstance(node, Assign):
+            return [node.target, node.value]
         if isinstance(node, BinaryOp):
             return [node.left, node.right]
         if isinstance(node, Call):
             return node.args
         if isinstance(node, Return):
             return [node.value] if node.value else []
+        if isinstance(node, Index):
+            return [node.target, node.index]
+        if isinstance(node, ArrayLiteral):
+            return node.elements
         return []
 
     def visit_Module(self, node: Module):
         self.functions.clear()
-        # First pass: collect function signatures
         for stmt in node.body:
             if isinstance(stmt, Function):
                 if stmt.name in self.functions:
@@ -121,7 +129,6 @@ class SemanticAnalyzer:
                 self.functions[stmt.name] = FuncInfo(
                     stmt.name, stmt.params, stmt.return_type, stmt.line, stmt.col
                 )
-        # Second pass: check bodies
         self.symbols.clear()
         for stmt in node.body:
             self.visit(stmt)
@@ -134,7 +141,6 @@ class SemanticAnalyzer:
         self.current_function = func_info
         self.in_function = True
 
-        # Add parameters to symbol table with their types (must be annotated)
         for param in node.params:
             if param.name in self.symbols:
                 raise SemanticError(
@@ -150,7 +156,6 @@ class SemanticAnalyzer:
                 param.name, param.type_ann, False, param.line, param.col
             )
 
-        # Process body and track last expression type for return inference
         last_expr_type = None
         for stmt in node.body:
             self.visit(stmt)
@@ -159,9 +164,7 @@ class SemanticAnalyzer:
             ):
                 last_expr_type = self._infer_type(stmt)
 
-        # Check return type
         if func_info.return_type:
-            # Explicit return type given: ensure body yields that type (if no explicit return)
             if last_expr_type and last_expr_type != func_info.return_type:
                 raise SemanticError(
                     f"function `{node.name}` returns {last_expr_type} but expected {func_info.return_type}",
@@ -169,7 +172,6 @@ class SemanticAnalyzer:
                     node.col,
                 )
         else:
-            # Infer from last expression or unit
             func_info.return_type = (
                 last_expr_type if last_expr_type is not None else "unit"
             )
@@ -202,6 +204,13 @@ class SemanticAnalyzer:
                 )
             for arg in node.args:
                 self.visit(arg)
+                arg_type = self._infer_type(arg)
+                if arg_type != "i32":
+                    raise SemanticError(
+                        f"println argument must be i32, found {arg_type}",
+                        arg.line,
+                        arg.col,
+                    )
             return
         if node.func not in self.functions:
             raise SemanticError(f"unknown function `{node.func}`", node.line, node.col)
@@ -260,24 +269,38 @@ class SemanticAnalyzer:
         )
 
     def visit_Assign(self, node: Assign):
-        if node.name not in self.symbols:
+        if isinstance(node.target, Name):
+            if node.target.id not in self.symbols:
+                raise SemanticError(
+                    f"use of undeclared variable `{node.target.id}`",
+                    node.target.line,
+                    node.target.col,
+                )
+            sym = self.symbols[node.target.id]
+            if not sym.mutable:
+                raise SemanticError(
+                    f"cannot assign to immutable variable `{node.target.id}`",
+                    node.target.line,
+                    node.target.col,
+                )
+            expected_type = sym.type
+        elif isinstance(node.target, Index):
+            target_type = self._infer_type(node.target)
+            expected_type = target_type
+        else:
             raise SemanticError(
-                f"use of undeclared variable `{node.name}`", node.line, node.col
+                f"cannot assign to {type(node.target).__name__}",
+                node.target.line,
+                node.target.col,
             )
-        sym = self.symbols[node.name]
-        if not sym.mutable:
-            raise SemanticError(
-                f"cannot assign to immutable variable `{node.name}`",
-                node.line,
-                node.col,
-            )
+
         self.visit(node.value)
         value_type = self._infer_type(node.value)
-        if value_type != sym.type:
+        if value_type != expected_type:
             raise SemanticError(
-                f"type mismatch: expected {sym.type}, found {value_type}",
-                node.line,
-                node.col,
+                f"type mismatch: expected {expected_type}, found {value_type}",
+                node.value.line,
+                node.value.col,
             )
 
     def visit_Name(self, node: Name):
@@ -346,6 +369,14 @@ class SemanticAnalyzer:
         if not self.loop_stack:
             raise SemanticError("continue outside loop", node.line, node.col)
 
+    def visit_Index(self, node: Index):
+        self.visit(node.target)
+        self.visit(node.index)
+
+    def visit_ArrayLiteral(self, node: ArrayLiteral):
+        for elem in node.elements:
+            self.visit(elem)
+
     def _infer_type(self, node: Node) -> str:
         if isinstance(node, IntLiteral):
             return "i32"
@@ -374,7 +405,6 @@ class SemanticAnalyzer:
             func = self.functions[node.func]
             return func.return_type if func.return_type else "unit"
         if isinstance(node, If):
-            # Infer type from last expression in each branch
             then_type = "unit"
             for stmt in node.then_body:
                 if not isinstance(
@@ -394,6 +424,54 @@ class SemanticAnalyzer:
                     node.col,
                 )
             return then_type
+        if isinstance(node, ArrayLiteral):
+            if not node.elements:
+                raise SemanticError(
+                    "empty array literals not supported", node.line, node.col
+                )
+            elem_type = self._infer_type(node.elements[0])
+            for elem in node.elements[1:]:
+                t = self._infer_type(elem)
+                if t != elem_type:
+                    raise SemanticError(
+                        f"array elements must have same type: {elem_type} vs {t}",
+                        elem.line,
+                        elem.col,
+                    )
+            return f"[{elem_type}; {len(node.elements)}]"
+        if isinstance(node, Index):
+            target_type = self._infer_type(node.target)
+            if not target_type.startswith("["):
+                raise SemanticError(
+                    f"cannot index non-array type `{target_type}`",
+                    node.target.line,
+                    node.target.col,
+                )
+            match = re.match(r"\[([^;]+);\s*(\d+)\]", target_type)
+            if not match:
+                raise SemanticError(
+                    f"invalid array type format: `{target_type}`",
+                    node.target.line,
+                    node.target.col,
+                )
+            elem_type = match.group(1).strip()
+            size = int(match.group(2))
+            index_type = self._infer_type(node.index)
+            if index_type != "i32":
+                raise SemanticError(
+                    f"array index must be i32, found `{index_type}`",
+                    node.index.line,
+                    node.index.col,
+                )
+            if isinstance(node.index, IntLiteral):
+                idx = node.index.value
+                if idx < 0 or idx >= size:
+                    raise SemanticError(
+                        f"index {idx} out of bounds for array of size {size}",
+                        node.index.line,
+                        node.index.col,
+                    )
+            return elem_type
         raise SemanticError(
             f"cannot infer type for {type(node).__name__}", node.line, node.col
         )

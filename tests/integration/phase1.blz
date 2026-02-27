@@ -1,4 +1,5 @@
 // EXPECTED: exit_code=0
+// OUTPUT: 6
 // Phase 1: Lexer – test all token types and line continuation.
 // Only features up to Phase 7 are used (no strings or floats yet).
 

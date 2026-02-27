@@ -1,26 +1,22 @@
 // EXPECTED: exit_code=0
+// OUTPUT: 100\n3\n4
 // Phase 7: Control flow – if, while, loop, break, continue.
-// Test all control structures.
 var i = 0
 var sum = 0
 
-// while
 while i < 5 {
     i = i + 1
     sum = sum + i
 }
 
-// if
 let if_result = if sum > 10 { 100 } else { 0 }
 
-// loop with break
 var j = 0
 loop {
     j = j + 1
     if j == 3 { break }
 }
 
-// continue in loop
 var k = 0
 var count = 0
 while k < 5 {
@@ -29,6 +25,6 @@ while k < 5 {
     count = count + 1
 }
 
-println(if_result)   // 100
-println(j)           // 3
-println(count)       // 4 (skipped k=2)
+println(if_result)
+println(j)
+println(count)

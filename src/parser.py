@@ -4,13 +4,15 @@
 from typing import List, Optional
 
 from src.blaze_ast import (
+    ArrayLiteral,  # new nodes
     Assign,
     BinaryOp,
     Break,
     Call,
     Continue,
     Function,
-    If,  # new nodes
+    If,
+    Index,
     IntLiteral,
     Let,
     Loop,
@@ -173,18 +175,35 @@ class Parser:
                 return self.parse_let()
             if kw == "var":
                 return self.parse_var()
-        # Check for assignment: identifier followed by '=' (skip newlines)
-        if self.current and self.current.type == TokenType.IDENT:
-            offset = 1
+        # Check for assignment: left-hand side expression followed by '='
+        # We'll parse an expression, then if the next token is '=', treat as assignment.
+        # Save position
+        saved_pos = self.pos
+        saved_current = self.current
+        # Parse a primary/postfix expression as potential left-hand side
+        lhs = self.parse_postfix()
+        # Look ahead for '=' after newlines
+        offset = 0
+        nxt = self.peek_token(offset)
+        while nxt and nxt.type == TokenType.NEWLINE:
+            offset += 1
             nxt = self.peek_token(offset)
-            while nxt and nxt.type == TokenType.NEWLINE:
-                offset += 1
-                nxt = self.peek_token(offset)
-            if nxt and nxt.type == TokenType.OPERATOR and nxt.value == "=":
-                return self.parse_assign()
-        # Otherwise, parse as expression
+        if nxt and nxt.type == TokenType.OPERATOR and nxt.value == "=":
+            # It's an assignment
+            # Consume the left-hand side we already parsed? We've advanced the parser.
+            # We need to backtrack to before parsing lhs, then parse assignment properly.
+            # Simpler: rewind and call parse_assign directly.
+            self.pos = saved_pos
+            self.current = saved_current
+            return self.parse_assign()
+        # Otherwise, it's an expression statement; we have already parsed lhs and consumed it.
+        # Continue parsing remaining postfix/binary ops? Actually lhs is just primary+postfix.
+        # We need to continue parsing binary ops after lhs. We'll re-parse fully.
+        # Rewind and parse full expression.
+        self.pos = saved_pos
+        self.current = saved_current
         expr = self.parse_expression()
-        return expr  # any expression is allowed as a statement
+        return expr
 
     def parse_if(self) -> If:
         start = self.consume(TokenType.KEYWORD)  # 'if'
@@ -221,10 +240,9 @@ class Parser:
 
     def parse_return(self) -> Return:
         ret = self.consume(TokenType.KEYWORD)  # 'return'
-        if (
-            self.current
-            and self.current.type in (TokenType.NEWLINE, TokenType.DELIMITER)
-            and self.current.value == "}"
+        if self.current and (
+            self.current.type == TokenType.NEWLINE
+            or (self.current.type == TokenType.DELIMITER and self.current.value == "}")
         ):
             return Return(None, line=ret.line, col=ret.col)
         expr = self.parse_expression()
@@ -261,19 +279,22 @@ class Parser:
         return Var(name, type_ann, value, line=start.line, col=start.col)
 
     def parse_assign(self) -> Assign:
-        name_tok = self.consume(TokenType.IDENT)
-        name = name_tok.value
+        # Left-hand side can be a name or an index expression
+        lhs = self.parse_postfix()
+        # Skip newlines before '='
         while self.current and self.current.type == TokenType.NEWLINE:
             self._advance()
         self.consume(TokenType.OPERATOR)  # '='
         value = self.parse_expression()
-        return Assign(name, value, line=name_tok.line, col=name_tok.col)
+        return Assign(lhs, value, line=lhs.line, col=lhs.col)
 
     def parse_expression(self) -> Node:
+        """Entry point for expression parsing."""
         return self.parse_binary(0)
 
     def parse_binary(self, min_prec: int) -> Node:
-        lhs = self.parse_primary()
+        """Parse binary expressions with precedence climbing."""
+        lhs = self.parse_postfix()
         while True:
             tok = self.current
             if not tok or tok.type != TokenType.OPERATOR:
@@ -289,25 +310,37 @@ class Parser:
             lhs = BinaryOp(op, lhs, rhs, line=lhs.line, col=lhs.col)
         return lhs
 
+    def parse_postfix(self) -> Node:
+        """Parse a primary expression followed by postfix operators (indexing)."""
+        lhs = self.parse_primary()
+        while True:
+            if (
+                self.current
+                and self.current.type == TokenType.DELIMITER
+                and self.current.value == "["
+            ):
+                self.consume(TokenType.DELIMITER)  # '['
+                index = self.parse_expression()
+                self.consume(TokenType.DELIMITER)  # ']'
+                lhs = Index(lhs, index, line=lhs.line, col=lhs.col)
+            else:
+                break
+        return lhs
+
     def parse_primary(self) -> Node:
+        # Keyword expressions (if)
+        if self.current and self.current.type == TokenType.KEYWORD:
+            if self.current.value == "if":
+                return self.parse_if()
+
         if self.current and self.current.type == TokenType.NUMBER:
             tok = self.consume(TokenType.NUMBER)
             try:
-                # Python's int() with base 0 handles 0x, 0b, 0o prefixes
                 value = int(tok.value, 0)
             except ValueError:
                 self._error(f"Invalid integer literal: {tok.value}")
             return IntLiteral(value, line=tok.line, col=tok.col)
-        if self.current and self.current.type == TokenType.KEYWORD:
-            if self.current.value == "if":
-                return self.parse_if()
-        if self.current and self.current.type == TokenType.NUMBER:
-            tok = self.consume(TokenType.NUMBER)
-            try:
-                value = int(tok.value)
-            except ValueError:
-                self._error(f"Invalid integer literal: {tok.value}")
-            return IntLiteral(value, line=tok.line, col=tok.col)
+
         elif self.current and self.current.type == TokenType.IDENT:
             tok = self.consume(TokenType.IDENT)
             if (
@@ -319,6 +352,35 @@ class Parser:
                 return Call(tok.value, args, line=tok.line, col=tok.col)
             else:
                 return Name(tok.value, line=tok.line, col=tok.col)
+
+        elif (
+            self.current
+            and self.current.type == TokenType.DELIMITER
+            and self.current.value == "["
+        ):
+            start = self.current
+            self.consume(TokenType.DELIMITER)  # '['
+            elements = []
+            if self.current and not (
+                self.current.type == TokenType.DELIMITER and self.current.value == "]"
+            ):
+                elements.append(self.parse_expression())
+                while (
+                    self.current
+                    and self.current.type == TokenType.DELIMITER
+                    and self.current.value == ","
+                ):
+                    self.consume(TokenType.DELIMITER)  # ','
+                    if (
+                        self.current
+                        and self.current.type == TokenType.DELIMITER
+                        and self.current.value == "]"
+                    ):
+                        break
+                    elements.append(self.parse_expression())
+            self.consume(TokenType.DELIMITER)  # ']'
+            return ArrayLiteral(elements, line=start.line, col=start.col)
+
         elif (
             self.current
             and self.current.type == TokenType.DELIMITER
@@ -330,6 +392,7 @@ class Parser:
             expr.line = open_tok.line
             expr.col = open_tok.col
             return expr
+
         self._error("Expected expression")
 
     def parse_call_args(self) -> List[Node]:

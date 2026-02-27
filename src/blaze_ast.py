@@ -121,17 +121,17 @@ class Var(Node):
 
 
 class Assign(Node):
-    """Assignment to a mutable variable."""
+    """Assignment to a mutable variable or array element."""
 
-    __slots__ = ("name", "value")
+    __slots__ = ("target", "value")
 
-    def __init__(self, name: str, value: Node, line: int = 0, col: int = 0):
+    def __init__(self, target: Node, value: Node, line: int = 0, col: int = 0):
         super().__init__(line, col)
-        self.name = name
+        self.target = target
         self.value = value
 
     def __repr__(self):
-        return f"Assign({self.name!r}, {self.value!r})"
+        return f"Assign({self.target!r}, {self.value!r})"
 
 
 class Call(Node):
@@ -283,3 +283,30 @@ class Continue(Node):
 
     def __repr__(self):
         return f"Continue({self.label!r})"
+
+
+class ArrayLiteral(Node):
+    """Array literal: [expr, expr, ...] (trailing comma allowed)."""
+
+    __slots__ = ("elements",)
+
+    def __init__(self, elements: List[Node], line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.elements = elements
+
+    def __repr__(self):
+        return f"ArrayLiteral({self.elements!r})"
+
+
+class Index(Node):
+    """Index expression: target[index]."""
+
+    __slots__ = ("target", "index")
+
+    def __init__(self, target: Node, index: Node, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.target = target
+        self.index = index
+
+    def __repr__(self):
+        return f"Index({self.target!r}, {self.index!r})"

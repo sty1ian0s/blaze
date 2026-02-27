@@ -1,6 +1,6 @@
 // EXPECTED: exit_code=0
+// OUTPUT: 1\n2\n3
 // Phase 4: Integer literals and println.
-// Already covered, but we'll add a test with multiple println.
 println(1)
 println(2)
 println(3)

@@ -1,4 +1,5 @@
 // EXPECTED: exit_code=0
+// OUTPUT: 17
 // Phase 6: Functions and calls
 // Test function definition, parameters, return.
 

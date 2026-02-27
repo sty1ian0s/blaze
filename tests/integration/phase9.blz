@@ -1,0 +1,13 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 60\n99
+// Phase 9: Arrays and slices
+let arr = [10, 20, 30]
+var sum = 0
+var i = 0
+while i < 3 {
+    sum = sum + arr[i]
+    i = i + 1
+}
+println(sum)
+arr[1] = 99
+println(arr[1])

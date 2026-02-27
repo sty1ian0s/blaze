@@ -4,6 +4,7 @@
 from typing import List, Optional
 
 from src.blaze_ast import (
+    ArrayLiteral,
     Assign,
     BinaryOp,
     Break,
@@ -11,6 +12,7 @@ from src.blaze_ast import (
     Continue,
     Function,
     If,
+    Index,
     IntLiteral,
     Let,
     Loop,
@@ -37,7 +39,7 @@ class CodeGen:
         self.functions = set()
         self.alloca_counter = 0
         self.label_counter = 0
-        self.blocks = []  # stack of (loop_header, loop_exit, loop_label) for break/continue
+        self.blocks = []
 
     def indent(self):
         self.indent_level += 1
@@ -98,6 +100,12 @@ class CodeGen:
         elif isinstance(node, While) or isinstance(node, Loop):
             for stmt in node.body:
                 count += self.count_prints(stmt)
+        elif isinstance(node, ArrayLiteral):
+            for elem in node.elements:
+                count += self.count_prints(elem)
+        elif isinstance(node, Index):
+            count += self.count_prints(node.target)
+            count += self.count_prints(node.index)
         elif hasattr(node, "args") and isinstance(node.args, list):
             for arg in node.args:
                 if isinstance(arg, Node):
@@ -224,7 +232,6 @@ class CodeGen:
         elif isinstance(node, Call):
             return self.gen_call(node)
         elif isinstance(node, If):
-            # If as statement – generate without phi
             self.gen_if_stmt(node)
             return None
         elif isinstance(node, While):
@@ -242,63 +249,7 @@ class CodeGen:
         else:
             return self.gen_expression(node)
 
-    def gen_if_stmt(self, node: If):
-        """Generate an if statement (no value, no phi)."""
-        cond_reg = self.gen_expression(node.cond)
-        then_label = self.fresh_label("then")
-        else_label = self.fresh_label("else")
-        merge_label = self.fresh_label("merge")
-
-        cmp_reg = f"cmp.{self.alloca_counter}"
-        self.alloca_counter += 1
-        self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
-        self.emit(f"br i1 %{cmp_reg}, label %{then_label}, label %{else_label}")
-
-        # Then block
-        self.emit(f"{then_label}:")
-        self.indent()
-        for stmt in node.then_body:
-            self.gen_statement(stmt)
-        # Branch to merge (if not already terminated by break/continue/return)
-        if not self._block_terminated():
-            self.emit(f"br label %{merge_label}")
-        self.dedent()
-
-        # Else block
-        self.emit(f"{else_label}:")
-        self.indent()
-        for stmt in node.else_body:
-            self.gen_statement(stmt)
-        if not self._block_terminated():
-            self.emit(f"br label %{merge_label}")
-        self.dedent()
-
-        # Merge block (only needed if both branches don't terminate)
-        if not self._all_branches_terminated(node):
-            self.emit(f"{merge_label}:")
-        else:
-            # If both branches terminate (e.g., with return/break), merge is unreachable
-            # We still need to emit it to keep IR valid? Actually if both branches terminate,
-            # we can omit the merge block. We'll add a dummy unreachable block to be safe.
-            self.emit(f"{merge_label}:")
-            self.emit("unreachable")
-
-    def _block_terminated(self) -> bool:
-        """Check if the last emitted statement terminated the block (return/break/continue)."""
-        # Simple check: look at last emitted line
-        if not self.output:
-            return False
-        last = self.output[-1].strip()
-        return last.startswith("ret ") or last.startswith("br label %")
-
-    def _all_branches_terminated(self, node: If) -> bool:
-        """Check if both then and else branches end with a terminator."""
-        # This is a simplification; in practice, we'd need to analyze deeper.
-        # For now, assume not.
-        return False
-
     def gen_block_expr(self, stmts: List[Node]) -> Optional[str]:
-        """Generate a block and return the register of the last expression if any."""
         last_reg = None
         for stmt in stmts:
             reg = self.gen_statement(stmt)
@@ -307,7 +258,6 @@ class CodeGen:
         return last_reg
 
     def gen_if_expr(self, node: If) -> str:
-        """Generate an if expression and return the result register."""
         cond_reg = self.gen_expression(node.cond)
         then_label = self.fresh_label("then")
         else_label = self.fresh_label("else")
@@ -318,19 +268,16 @@ class CodeGen:
         self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
         self.emit(f"br i1 %{cmp_reg}, label %{then_label}, label %{else_label}")
 
-        # Then block
         self.emit(f"{then_label}:")
         self.indent()
         then_reg = self.gen_block_expr(node.then_body)
         if then_reg is None:
-            # If then block has no value (e.g., just statements), use 0 as placeholder
             then_reg = f"tmp.{self.alloca_counter}"
             self.alloca_counter += 1
             self.emit(f"%{then_reg} = add i32 0, 0")
         self.emit(f"br label %{merge_label}")
         self.dedent()
 
-        # Else block
         self.emit(f"{else_label}:")
         self.indent()
         else_reg = self.gen_block_expr(node.else_body)
@@ -341,7 +288,6 @@ class CodeGen:
         self.emit(f"br label %{merge_label}")
         self.dedent()
 
-        # Merge block with phi
         self.emit(f"{merge_label}:")
         self.indent()
         phi_reg = f"phi.{self.alloca_counter}"
@@ -351,6 +297,44 @@ class CodeGen:
         )
         self.dedent()
         return phi_reg
+
+    def gen_if_stmt(self, node: If):
+        cond_reg = self.gen_expression(node.cond)
+        then_label = self.fresh_label("then")
+        else_label = self.fresh_label("else")
+        merge_label = self.fresh_label("merge")
+
+        cmp_reg = f"cmp.{self.alloca_counter}"
+        self.alloca_counter += 1
+        self.emit(f"%{cmp_reg} = icmp ne i32 %{cond_reg}, 0")
+        self.emit(f"br i1 %{cmp_reg}, label %{then_label}, label %{else_label}")
+
+        self.emit(f"{then_label}:")
+        self.indent()
+        for stmt in node.then_body:
+            self.gen_statement(stmt)
+        if not self._block_terminated():
+            self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        self.emit(f"{else_label}:")
+        self.indent()
+        for stmt in node.else_body:
+            self.gen_statement(stmt)
+        if not self._block_terminated():
+            self.emit(f"br label %{merge_label}")
+        self.dedent()
+
+        self.emit(f"{merge_label}:")
+        # if both branches terminated, merge is unreachable
+        if self._block_terminated():
+            self.emit("unreachable")
+
+    def _block_terminated(self) -> bool:
+        if not self.output:
+            return False
+        last = self.output[-1].strip()
+        return last.startswith("ret ") or last.startswith("br label %")
 
     def gen_return(self, node: Return):
         if node.value:
@@ -368,25 +352,58 @@ class CodeGen:
         return reg
 
     def gen_let(self, node: Let):
-        alloca = self.fresh_alloca()
-        self.emit(f"%{alloca} = alloca i32, align 4")
-        val = self.gen_expression(node.value)
-        self.emit(f"store i32 %{val}, i32* %{alloca}, align 4")
-        self.vars[node.name] = (alloca, "i32")
+        val_reg = self.gen_expression(node.value)
+        if isinstance(node.value, ArrayLiteral):
+            ptr_alloca = self.fresh_alloca()
+            self.emit(f"%{ptr_alloca} = alloca i32*, align 8")
+            self.emit(f"store i32* %{val_reg}, i32** %{ptr_alloca}, align 8")
+            self.vars[node.name] = (ptr_alloca, "i32*")
+        else:
+            alloca = self.fresh_alloca()
+            self.emit(f"%{alloca} = alloca i32, align 4")
+            self.emit(f"store i32 %{val_reg}, i32* %{alloca}, align 4")
+            self.vars[node.name] = (alloca, "i32")
 
     def gen_var(self, node: Var):
-        alloca = self.fresh_alloca()
-        self.emit(f"%{alloca} = alloca i32, align 4")
-        val = self.gen_expression(node.value)
-        self.emit(f"store i32 %{val}, i32* %{alloca}, align 4")
-        self.vars[node.name] = (alloca, "i32")
+        val_reg = self.gen_expression(node.value)
+        if isinstance(node.value, ArrayLiteral):
+            ptr_alloca = self.fresh_alloca()
+            self.emit(f"%{ptr_alloca} = alloca i32*, align 8")
+            self.emit(f"store i32* %{val_reg}, i32** %{ptr_alloca}, align 8")
+            self.vars[node.name] = (ptr_alloca, "i32*")
+        else:
+            alloca = self.fresh_alloca()
+            self.emit(f"%{alloca} = alloca i32, align 4")
+            self.emit(f"store i32 %{val_reg}, i32* %{alloca}, align 4")
+            self.vars[node.name] = (alloca, "i32")
 
     def gen_assign(self, node: Assign):
-        if node.name not in self.vars:
-            raise CodeGenError(f"undeclared variable `{node.name}`")
-        alloca, typ = self.vars[node.name]
-        val = self.gen_expression(node.value)
-        self.emit(f"store i32 %{val}, i32* %{alloca}, align 4")
+        if isinstance(node.target, Name):
+            if node.target.id not in self.vars:
+                raise CodeGenError(f"undeclared variable `{node.target.id}`")
+            alloca, typ = self.vars[node.target.id]
+            if typ == "i32*":
+                # assign to array pointer variable? Not allowed? For now, only i32 variables can be assigned.
+                raise CodeGenError(
+                    f"cannot assign to array variable `{node.target.id}` directly"
+                )
+            val = self.gen_expression(node.value)
+            self.emit(f"store i32 %{val}, i32* %{alloca}, align 4")
+        elif isinstance(node.target, Index):
+            # array element assignment
+            base_reg = self.gen_expression(node.target.target)
+            index_reg = self.gen_expression(node.target.index)
+            ptr_reg = f"ptr.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(
+                f"%{ptr_reg} = getelementptr inbounds i32, i32* %{base_reg}, i32 %{index_reg}"
+            )
+            val_reg = self.gen_expression(node.value)
+            self.emit(f"store i32 %{val_reg}, i32* %{ptr_reg}, align 4")
+        else:
+            raise CodeGenError(
+                f"unsupported assignment target: {type(node.target).__name__}"
+            )
 
     def gen_println(self, node: Call):
         if len(node.args) != 1:
@@ -414,7 +431,10 @@ class CodeGen:
             alloca, typ = self.vars[node.id]
             reg = f"tmp.{self.alloca_counter}"
             self.alloca_counter += 1
-            self.emit(f"%{reg} = load i32, i32* %{alloca}, align 4")
+            if typ == "i32*":
+                self.emit(f"%{reg} = load i32*, i32** %{alloca}, align 8")
+            else:
+                self.emit(f"%{reg} = load i32, i32* %{alloca}, align 4")
             return reg
         elif isinstance(node, BinaryOp):
             left = self.gen_expression(node.left)
@@ -449,14 +469,42 @@ class CodeGen:
                 raise CodeGenError(f"unsupported binary operator {node.op}")
             return reg
         elif isinstance(node, Call):
-            reg = self.gen_call(node)
-            return reg
+            return self.gen_call(node)
         elif isinstance(node, If):
             return self.gen_if_expr(node)
+        elif isinstance(node, ArrayLiteral):
+            elem_count = len(node.elements)
+            alloca_name = self.fresh_alloca()
+            self.emit(f"%{alloca_name} = alloca [{elem_count} x i32], align 4")
+            for i, elem in enumerate(node.elements):
+                elem_reg = self.gen_expression(elem)
+                ptr_reg = f"ptr.{self.alloca_counter}"
+                self.alloca_counter += 1
+                self.emit(
+                    f"%{ptr_reg} = getelementptr inbounds [{elem_count} x i32], [{elem_count} x i32]* %{alloca_name}, i32 0, i32 {i}"
+                )
+                self.emit(f"store i32 %{elem_reg}, i32* %{ptr_reg}, align 4")
+            ptr_cast = f"cast.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(
+                f"%{ptr_cast} = bitcast [{elem_count} x i32]* %{alloca_name} to i32*"
+            )
+            return ptr_cast
+        elif isinstance(node, Index):
+            target_reg = self.gen_expression(node.target)
+            index_reg = self.gen_expression(node.index)
+            ptr_reg = f"ptr.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(
+                f"%{ptr_reg} = getelementptr inbounds i32, i32* %{target_reg}, i32 %{index_reg}"
+            )
+            val_reg = f"tmp.{self.alloca_counter}"
+            self.alloca_counter += 1
+            self.emit(f"%{val_reg} = load i32, i32* %{ptr_reg}, align 4")
+            return val_reg
         else:
             raise CodeGenError(f"unsupported expression: {type(node).__name__}")
 
-    # --- Control flow generation (statements) ---
     def gen_while(self, node: While):
         cond_label = self.fresh_label("while.cond")
         body_label = self.fresh_label("while.body")
