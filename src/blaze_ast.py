@@ -146,3 +146,54 @@ class Call(Node):
 
     def __repr__(self):
         return f"Call({self.func!r}, {self.args!r})"
+
+
+class Param(Node):
+    """Function parameter."""
+
+    __slots__ = ("name", "type_ann")
+
+    def __init__(self, name: str, type_ann: Optional[str], line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.name = name
+        self.type_ann = type_ann
+
+    def __repr__(self):
+        return f"Param({self.name!r}, {self.type_ann!r})"
+
+
+class Function(Node):
+    """Function definition."""
+
+    __slots__ = ("name", "params", "return_type", "body")
+
+    def __init__(
+        self,
+        name: str,
+        params: List[Param],
+        return_type: Optional[str],
+        body: List[Node],
+        line: int = 0,
+        col: int = 0,
+    ):
+        super().__init__(line, col)
+        self.name = name
+        self.params = params
+        self.return_type = return_type
+        self.body = body
+
+    def __repr__(self):
+        return f"Function({self.name!r}, {self.params!r}, {self.return_type!r}, body=[...])"
+
+
+class Return(Node):
+    """Return statement."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Optional[Node], line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.value = value
+
+    def __repr__(self):
+        return f"Return({self.value!r})"

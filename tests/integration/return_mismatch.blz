@@ -1,0 +1,3 @@
+// EXPECTED: compile_error
+// ERROR: return type mismatch: expected i32, found unit
+fn bad() -> i32 { return }

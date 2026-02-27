@@ -1,0 +1,4 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 5
+fn five() -> i32 { return 5 }
+println(five())

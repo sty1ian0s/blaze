@@ -1,0 +1,4 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 7
+fn add(a, b) { a + b }
+println(add(3,4))
