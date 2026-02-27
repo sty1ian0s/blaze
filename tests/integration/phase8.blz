@@ -1,0 +1,17 @@
+// EXPECTED: exit_code=0
+// Phase 8: Type annotations and checking
+
+// let with annotation
+let a: i32 = 10
+
+// var with annotation
+var b: i32 = 20
+b = b * 2
+
+// function with annotated parameters and return
+fn add(x: i32, y: i32) -> i32 {
+    x + y
+}
+
+let c = add(a, b)
+println(c)   // 10 + 40 = 50

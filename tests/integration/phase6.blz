@@ -1,9 +1,11 @@
 // EXPECTED: exit_code=0
-// Phase 6: Functions and calls.
+// Phase 6: Functions and calls
 // Test function definition, parameters, return.
-fn add(a, b) { a + b }
-fn mul(a, b) { a * b }
-fn main_result() {
+
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn mul(a: i32, b: i32) -> i32 { a * b }
+
+fn main_result() -> i32 {
     let x = add(3, 4)
     let y = mul(2, 5)
     x + y

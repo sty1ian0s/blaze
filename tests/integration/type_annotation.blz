@@ -1,0 +1,4 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 5
+let x: i32 = 5
+println(x)

@@ -111,6 +111,7 @@ class SemanticAnalyzer:
 
     def visit_Module(self, node: Module):
         self.functions.clear()
+        # First pass: collect function signatures
         for stmt in node.body:
             if isinstance(stmt, Function):
                 if stmt.name in self.functions:
@@ -120,6 +121,7 @@ class SemanticAnalyzer:
                 self.functions[stmt.name] = FuncInfo(
                     stmt.name, stmt.params, stmt.return_type, stmt.line, stmt.col
                 )
+        # Second pass: check bodies
         self.symbols.clear()
         for stmt in node.body:
             self.visit(stmt)
@@ -128,93 +130,53 @@ class SemanticAnalyzer:
         old_symbols = self.symbols
         self.symbols = {}
         old_func = self.current_function
-        # Create function info (may be updated later)
-        func_info = FuncInfo(
-            node.name, node.params, node.return_type, node.line, node.col
-        )
-        self.functions[node.name] = func_info
+        func_info = self.functions[node.name]
         self.current_function = func_info
         self.in_function = True
 
+        # Add parameters to symbol table with their types (must be annotated)
         for param in node.params:
             if param.name in self.symbols:
                 raise SemanticError(
                     f"duplicate parameter name `{param.name}`", param.line, param.col
                 )
-            param_type = param.type_ann if param.type_ann else "i32"
+            if not param.type_ann:
+                raise SemanticError(
+                    f"parameter `{param.name}` must have a type annotation",
+                    param.line,
+                    param.col,
+                )
             self.symbols[param.name] = Symbol(
-                param.name, param_type, False, param.line, param.col
+                param.name, param.type_ann, False, param.line, param.col
             )
 
+        # Process body and track last expression type for return inference
         last_expr_type = None
         for stmt in node.body:
             self.visit(stmt)
-            # track last expression type if stmt is an expression (not a statement that returns unit)
             if not isinstance(
                 stmt, (Let, Var, Assign, Return, If, While, Loop, Break, Continue)
             ):
                 last_expr_type = self._infer_type(stmt)
 
-        # Determine return type
-        if node.return_type:
-            # explicit return type given
-            if last_expr_type and last_expr_type != node.return_type:
+        # Check return type
+        if func_info.return_type:
+            # Explicit return type given: ensure body yields that type (if no explicit return)
+            if last_expr_type and last_expr_type != func_info.return_type:
                 raise SemanticError(
-                    f"function `{node.name}` return type mismatch: body yields {last_expr_type}, expected {node.return_type}",
+                    f"function `{node.name}` returns {last_expr_type} but expected {func_info.return_type}",
                     node.line,
                     node.col,
                 )
-            # also need to check that any return statements match (already checked in visit_Return)
         else:
-            # infer from last expression or unit
-            inferred = last_expr_type if last_expr_type is not None else "unit"
-            func_info.return_type = inferred
+            # Infer from last expression or unit
+            func_info.return_type = (
+                last_expr_type if last_expr_type is not None else "unit"
+            )
 
         self.symbols = old_symbols
         self.current_function = old_func
         self.in_function = bool(old_func)
-
-    def visit_If(self, node: If):
-        self.visit(node.cond)
-        cond_type = self._infer_type(node.cond)
-        if cond_type != "i32":
-            raise SemanticError(
-                f"if condition must be integer, found {cond_type}",
-                node.cond.line,
-                node.cond.col,
-            )
-        for stmt in node.then_body:
-            self.visit(stmt)
-        for stmt in node.else_body:
-            self.visit(stmt)
-
-    def visit_While(self, node: While):
-        self.visit(node.cond)
-        cond_type = self._infer_type(node.cond)
-        if cond_type != "i32":
-            raise SemanticError(
-                f"while condition must be integer, found {cond_type}",
-                node.cond.line,
-                node.cond.col,
-            )
-        self.loop_stack.append(node.label)
-        for stmt in node.body:
-            self.visit(stmt)
-        self.loop_stack.pop()
-
-    def visit_Loop(self, node: Loop):
-        self.loop_stack.append(node.label)
-        for stmt in node.body:
-            self.visit(stmt)
-        self.loop_stack.pop()
-
-    def visit_Break(self, node: Break):
-        if not self.loop_stack:
-            raise SemanticError("break outside loop", node.line, node.col)
-
-    def visit_Continue(self, node: Continue):
-        if not self.loop_stack:
-            raise SemanticError("continue outside loop", node.line, node.col)
 
     def visit_Return(self, node: Return):
         if not self.in_function:
@@ -224,12 +186,10 @@ class SemanticAnalyzer:
             ret_type = self._infer_type(node.value)
         else:
             ret_type = "unit"
-        if (
-            self.current_function.return_type
-            and ret_type != self.current_function.return_type
-        ):
+        expected = self.current_function.return_type
+        if expected and ret_type != expected:
             raise SemanticError(
-                f"return type mismatch: expected {self.current_function.return_type}, found {ret_type}",
+                f"return type mismatch: expected {expected}, found {ret_type}",
                 node.line,
                 node.col,
             )
@@ -270,12 +230,13 @@ class SemanticAnalyzer:
             )
         self.visit(node.value)
         value_type = self._infer_type(node.value)
-        if node.type_ann and value_type != node.type_ann:
-            raise SemanticError(
-                f"type mismatch: expected {node.type_ann}, found {value_type}",
-                node.line,
-                node.col,
-            )
+        if node.type_ann:
+            if value_type != node.type_ann:
+                raise SemanticError(
+                    f"type mismatch: expected {node.type_ann}, found {value_type}",
+                    node.line,
+                    node.col,
+                )
         self.symbols[node.name] = Symbol(
             node.name, value_type, False, node.line, node.col
         )
@@ -287,12 +248,13 @@ class SemanticAnalyzer:
             )
         self.visit(node.value)
         value_type = self._infer_type(node.value)
-        if node.type_ann and value_type != node.type_ann:
-            raise SemanticError(
-                f"type mismatch: expected {node.type_ann}, found {value_type}",
-                node.line,
-                node.col,
-            )
+        if node.type_ann:
+            if value_type != node.type_ann:
+                raise SemanticError(
+                    f"type mismatch: expected {node.type_ann}, found {value_type}",
+                    node.line,
+                    node.col,
+                )
         self.symbols[node.name] = Symbol(
             node.name, value_type, True, node.line, node.col
         )
@@ -342,6 +304,48 @@ class SemanticAnalyzer:
                 node.col,
             )
 
+    def visit_If(self, node: If):
+        self.visit(node.cond)
+        cond_type = self._infer_type(node.cond)
+        if cond_type != "i32":
+            raise SemanticError(
+                f"if condition must be integer, found {cond_type}",
+                node.cond.line,
+                node.cond.col,
+            )
+        for stmt in node.then_body:
+            self.visit(stmt)
+        for stmt in node.else_body:
+            self.visit(stmt)
+
+    def visit_While(self, node: While):
+        self.visit(node.cond)
+        cond_type = self._infer_type(node.cond)
+        if cond_type != "i32":
+            raise SemanticError(
+                f"while condition must be integer, found {cond_type}",
+                node.cond.line,
+                node.cond.col,
+            )
+        self.loop_stack.append(node.label)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.loop_stack.pop()
+
+    def visit_Loop(self, node: Loop):
+        self.loop_stack.append(node.label)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.loop_stack.pop()
+
+    def visit_Break(self, node: Break):
+        if not self.loop_stack:
+            raise SemanticError("break outside loop", node.line, node.col)
+
+    def visit_Continue(self, node: Continue):
+        if not self.loop_stack:
+            raise SemanticError("continue outside loop", node.line, node.col)
+
     def _infer_type(self, node: Node) -> str:
         if isinstance(node, IntLiteral):
             return "i32"
@@ -370,7 +374,7 @@ class SemanticAnalyzer:
             func = self.functions[node.func]
             return func.return_type if func.return_type else "unit"
         if isinstance(node, If):
-            # Find the last expression in then branch
+            # Infer type from last expression in each branch
             then_type = "unit"
             for stmt in node.then_body:
                 if not isinstance(
@@ -390,18 +394,6 @@ class SemanticAnalyzer:
                     node.col,
                 )
             return then_type
-        if isinstance(node, Call):
-            if node.func == "println":
-                return "unit"
-            if node.func not in self.functions:
-                raise SemanticError(
-                    f"unknown function `{node.func}`", node.line, node.col
-                )
-            func = self.functions[node.func]
-            if func.return_type is None:
-                # Should not happen after we infer, but just in case:
-                return "i32"
-            return func.return_type
         raise SemanticError(
             f"cannot infer type for {type(node).__name__}", node.line, node.col
         )
