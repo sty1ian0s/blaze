@@ -1,0 +1,3 @@
+// EXPECTED: compile_error
+// ERROR: use of undeclared variable `y`
+println(y)

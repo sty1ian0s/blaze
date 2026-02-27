@@ -1,0 +1,5 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 10
+var x = 5
+x = x * 2
+println(x)

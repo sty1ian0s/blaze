@@ -3,6 +3,7 @@
 
 """
 Abstract Syntax Tree (AST) node definitions for Blaze.
+All nodes store source location (line, col) for error reporting.
 """
 
 from typing import Any, List, Optional
@@ -11,18 +12,23 @@ from typing import Any, List, Optional
 class Node:
     """Base class for all AST nodes."""
 
-    __slots__ = ()
+    __slots__ = ("line", "col")
+
+    def __init__(self, line: int = 0, col: int = 0):
+        self.line = line
+        self.col = col
 
     def __repr__(self):
         return f"{self.__class__.__name__}()"
 
 
 class Module(Node):
-    """Root node of a Blaze program. Contains a list of top-level items (functions, structs, etc.)."""
+    """Root node of a Blaze program."""
 
     __slots__ = ("body",)
 
-    def __init__(self, body: List[Node]):
+    def __init__(self, body: List[Node], line: int = 0, col: int = 0):
+        super().__init__(line, col)
         self.body = body
 
     def __repr__(self):
@@ -34,11 +40,98 @@ class IntLiteral(Node):
 
     __slots__ = ("value",)
 
-    def __init__(self, value: int):
+    def __init__(self, value: int, line: int = 0, col: int = 0):
+        super().__init__(line, col)
         self.value = value
 
     def __repr__(self):
         return f"IntLiteral({self.value})"
+
+
+class Name(Node):
+    """Variable reference."""
+
+    __slots__ = ("id",)
+
+    def __init__(self, id: str, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.id = id
+
+    def __repr__(self):
+        return f"Name({self.id!r})"
+
+
+class BinaryOp(Node):
+    """Binary operation: left op right."""
+
+    __slots__ = ("op", "left", "right")
+
+    def __init__(self, op: str, left: Node, right: Node, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.op = op
+        self.left = left
+        self.right = right
+
+    def __repr__(self):
+        return f"BinaryOp({self.op!r}, {self.left!r}, {self.right!r})"
+
+
+class Let(Node):
+    """Immutable let binding."""
+
+    __slots__ = ("name", "type_ann", "value")
+
+    def __init__(
+        self,
+        name: str,
+        type_ann: Optional[str],
+        value: Node,
+        line: int = 0,
+        col: int = 0,
+    ):
+        super().__init__(line, col)
+        self.name = name
+        self.type_ann = type_ann
+        self.value = value
+
+    def __repr__(self):
+        return f"Let({self.name!r}, {self.type_ann!r}, {self.value!r})"
+
+
+class Var(Node):
+    """Mutable var binding."""
+
+    __slots__ = ("name", "type_ann", "value")
+
+    def __init__(
+        self,
+        name: str,
+        type_ann: Optional[str],
+        value: Node,
+        line: int = 0,
+        col: int = 0,
+    ):
+        super().__init__(line, col)
+        self.name = name
+        self.type_ann = type_ann
+        self.value = value
+
+    def __repr__(self):
+        return f"Var({self.name!r}, {self.type_ann!r}, {self.value!r})"
+
+
+class Assign(Node):
+    """Assignment to a mutable variable."""
+
+    __slots__ = ("name", "value")
+
+    def __init__(self, name: str, value: Node, line: int = 0, col: int = 0):
+        super().__init__(line, col)
+        self.name = name
+        self.value = value
+
+    def __repr__(self):
+        return f"Assign({self.name!r}, {self.value!r})"
 
 
 class Call(Node):
@@ -46,7 +139,8 @@ class Call(Node):
 
     __slots__ = ("func", "args")
 
-    def __init__(self, func: str, args: List[Node]):
+    def __init__(self, func: str, args: List[Node], line: int = 0, col: int = 0):
+        super().__init__(line, col)
         self.func = func
         self.args = args
 

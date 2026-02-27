@@ -1,0 +1,4 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 7
+let x = 3 + 4
+println(x)
