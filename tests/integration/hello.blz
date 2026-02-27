@@ -1,0 +1,3 @@
+// EXPECTED: exit_code=0
+// OUTPUT: 42
+println(42)

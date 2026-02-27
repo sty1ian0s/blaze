@@ -27,3 +27,28 @@ class Module(Node):
 
     def __repr__(self):
         return f"Module(body={self.body!r})"
+
+
+class IntLiteral(Node):
+    """Integer literal (e.g., 42)."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: int):
+        self.value = value
+
+    def __repr__(self):
+        return f"IntLiteral({self.value})"
+
+
+class Call(Node):
+    """Function call: name(args)."""
+
+    __slots__ = ("func", "args")
+
+    def __init__(self, func: str, args: List[Node]):
+        self.func = func
+        self.args = args
+
+    def __repr__(self):
+        return f"Call({self.func!r}, {self.args!r})"

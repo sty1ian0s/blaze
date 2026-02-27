@@ -1,0 +1,3 @@
+// EXPECTED: compile_error
+// ERROR: Expected integer literal
+println()

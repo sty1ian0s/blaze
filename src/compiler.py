@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Blaze compiler – driver that orchestrates lexing, parsing, code generation,
-and invocation of clang to produce an executable.
+Blaze compiler – driver that orchestrates lexing, parsing, semantic analysis,
+code generation, and invocation of clang to produce an executable.
 """
 
 import argparse
@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.codegen import CodeGen, CodeGenError
 from src.lexer import Lexer, LexerError
 from src.parser import ParseError, Parser
+from src.semantic import SemanticAnalyzer, SemanticError
 
 
 class CompileError(Exception):
@@ -55,6 +56,9 @@ def main():
         # Parsing
         parser = Parser(lexer)
         ast = parser.parse_program()
+        # Semantic analysis (placeholder)
+        semantic = SemanticAnalyzer()
+        ast = semantic.analyze(ast)
         # Code generation
         codegen = CodeGen()
         ir = codegen.generate(ast)
@@ -68,7 +72,7 @@ def main():
         ir_path.unlink(missing_ok=True)
         print(f"Successfully compiled {input_path} to {output_path}", file=sys.stderr)
 
-    except (LexerError, ParseError, CodeGenError, CompileError) as e:
+    except (LexerError, ParseError, SemanticError, CodeGenError, CompileError) as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
