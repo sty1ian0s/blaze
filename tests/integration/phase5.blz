@@ -1,0 +1,7 @@
+// EXPECTED: exit_code=0
+// Phase 5: Variables and arithmetic.
+// Test let, var, assignment, binary ops.
+var x = 5
+let y = 10
+x = x * 2 + y / 2
+println(x)   // 5*2 + 5 = 15

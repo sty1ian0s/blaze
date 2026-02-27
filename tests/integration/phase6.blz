@@ -1,0 +1,11 @@
+// EXPECTED: exit_code=0
+// Phase 6: Functions and calls.
+// Test function definition, parameters, return.
+fn add(a, b) { a + b }
+fn mul(a, b) { a * b }
+fn main_result() {
+    let x = add(3, 4)
+    let y = mul(2, 5)
+    x + y
+}
+println(main_result())   // 3+4 + 2*5 = 7 + 10 = 17

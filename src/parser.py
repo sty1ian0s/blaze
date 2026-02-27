@@ -290,6 +290,14 @@ class Parser:
         return lhs
 
     def parse_primary(self) -> Node:
+        if self.current and self.current.type == TokenType.NUMBER:
+            tok = self.consume(TokenType.NUMBER)
+            try:
+                # Python's int() with base 0 handles 0x, 0b, 0o prefixes
+                value = int(tok.value, 0)
+            except ValueError:
+                self._error(f"Invalid integer literal: {tok.value}")
+            return IntLiteral(value, line=tok.line, col=tok.col)
         if self.current and self.current.type == TokenType.KEYWORD:
             if self.current.value == "if":
                 return self.parse_if()

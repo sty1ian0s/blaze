@@ -1,0 +1,7 @@
+// EXPECTED: exit_code=0
+// Phase 2: Parser – empty program already covered.
+// This test adds basic expressions and statements (already in phase1).
+// Phase 2 added AST and parser skeleton; phase1 already covers.
+// We'll reuse phase1 but add a comment.
+let x = 5
+println(x)

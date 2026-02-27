@@ -249,6 +249,14 @@ class Lexer:
         start_pos = self.pos
         is_float = False
 
+        # Helper to consume digits and underscores
+        def consume_digits():
+            while True:
+                ch = self._current()
+                if ch is None or (not ch.isdigit() and ch != "_"):
+                    break
+                self._advance()
+
         ch = self._current()
         # Check for binary/hex/octal prefix
         if ch == "0":
@@ -258,49 +266,43 @@ class Lexer:
                 while (ch := self._current()) is not None and (
                     ch.isdigit() or ch in "abcdefABCDEF" or ch == "_"
                 ):
-                    if ch != "_":
-                        pass  # just consume
                     self._advance()
-                # After consuming, we have the whole literal; no need to validate further.
-                return Token(
-                    TokenType.NUMBER,
-                    self.source[start_pos : self.pos],
-                    start_line,
-                    start_col,
-                )
+                value = self.source[start_pos : self.pos]
+                return Token(TokenType.NUMBER, value, start_line, start_col, raw=value)
             elif nch in ("b", "B"):  # binary
                 self._advance(2)
                 while (ch := self._current()) is not None and (
                     ch in "01_" or ch == "_"
                 ):
                     self._advance()
-                return Token(
-                    TokenType.NUMBER,
-                    self.source[start_pos : self.pos],
-                    start_line,
-                    start_col,
-                )
+                value = self.source[start_pos : self.pos]
+                return Token(TokenType.NUMBER, value, start_line, start_col, raw=value)
             elif nch in ("o", "O"):  # octal
                 self._advance(2)
                 while (ch := self._current()) is not None and (
                     ch in "01234567_" or ch == "_"
                 ):
                     self._advance()
-                return Token(
-                    TokenType.NUMBER,
-                    self.source[start_pos : self.pos],
-                    start_line,
-                    start_col,
-                )
+                value = self.source[start_pos : self.pos]
+                return Token(TokenType.NUMBER, value, start_line, start_col, raw=value)
 
-        # Decimal integer or float
-        while (ch := self._current()) is not None and (ch.isdigit() or ch == "_"):
-            self._advance()
-        if self._current() == "." and self._peek() and self._peek().isdigit():
-            is_float = True
-            self._advance()  # consume '.'
-            while (ch := self._current()) is not None and (ch.isdigit() or ch == "_"):
-                self._advance()
+        # Decimal integer part
+        consume_digits()
+
+        # Decimal point and fractional part
+        if self._current() == ".":
+            next_ch = self._peek()
+            if next_ch and next_ch.isdigit():
+                is_float = True
+                self._advance()  # consume '.'
+                consume_digits()
+            else:
+                # Not a float, just a dot (will be handled as operator later)
+                # But we've already consumed digits; we need to backtrack? No, we stop here.
+                # The dot is not part of the number, so we return integer token.
+                value = self.source[start_pos : self.pos]
+                return Token(TokenType.NUMBER, value, start_line, start_col, raw=value)
+
         # Check for exponent
         if (ch := self._current()) is not None and ch in "eE":
             is_float = True
@@ -314,9 +316,8 @@ class Lexer:
                     self.col,
                     self._get_source_line(),
                 )
-            while (ch := self._current()) is not None and (ch.isdigit() or ch == "_"):
-                self._advance()
-        # Optional float suffix f32/f64
+            consume_digits()
+
         # Optional float suffix f32/f64
         if (ch := self._current()) is not None and ch == "f":
             if self._peek() == "3" and self._peek(2) == "2":
@@ -325,6 +326,7 @@ class Lexer:
             elif self._peek() == "6" and self._peek(2) == "4":
                 is_float = True
                 self._advance(3)  # consume f64
+
         value = self.source[start_pos : self.pos]
         token_type = TokenType.FLOAT if is_float else TokenType.NUMBER
         return Token(token_type, value, start_line, start_col, raw=value)

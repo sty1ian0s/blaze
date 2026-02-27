@@ -128,7 +128,12 @@ class SemanticAnalyzer:
         old_symbols = self.symbols
         self.symbols = {}
         old_func = self.current_function
-        self.current_function = self.functions[node.name]
+        # Create function info (may be updated later)
+        func_info = FuncInfo(
+            node.name, node.params, node.return_type, node.line, node.col
+        )
+        self.functions[node.name] = func_info
+        self.current_function = func_info
         self.in_function = True
 
         for param in node.params:
@@ -141,17 +146,29 @@ class SemanticAnalyzer:
                 param.name, param_type, False, param.line, param.col
             )
 
+        last_expr_type = None
         for stmt in node.body:
             self.visit(stmt)
+            # track last expression type if stmt is an expression (not a statement that returns unit)
+            if not isinstance(
+                stmt, (Let, Var, Assign, Return, If, While, Loop, Break, Continue)
+            ):
+                last_expr_type = self._infer_type(stmt)
 
+        # Determine return type
         if node.return_type:
-            last = node.body[-1] if node.body else None
-            if not isinstance(last, Return):
+            # explicit return type given
+            if last_expr_type and last_expr_type != node.return_type:
                 raise SemanticError(
-                    f"function `{node.name}` must return a value of type {node.return_type}",
+                    f"function `{node.name}` return type mismatch: body yields {last_expr_type}, expected {node.return_type}",
                     node.line,
                     node.col,
                 )
+            # also need to check that any return statements match (already checked in visit_Return)
+        else:
+            # infer from last expression or unit
+            inferred = last_expr_type if last_expr_type is not None else "unit"
+            func_info.return_type = inferred
 
         self.symbols = old_symbols
         self.current_function = old_func
@@ -373,6 +390,18 @@ class SemanticAnalyzer:
                     node.col,
                 )
             return then_type
+        if isinstance(node, Call):
+            if node.func == "println":
+                return "unit"
+            if node.func not in self.functions:
+                raise SemanticError(
+                    f"unknown function `{node.func}`", node.line, node.col
+                )
+            func = self.functions[node.func]
+            if func.return_type is None:
+                # Should not happen after we infer, but just in case:
+                return "i32"
+            return func.return_type
         raise SemanticError(
             f"cannot infer type for {type(node).__name__}", node.line, node.col
         )

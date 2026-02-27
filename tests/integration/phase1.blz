@@ -1,0 +1,15 @@
+// EXPECTED: exit_code=0
+// Phase 1: Lexer – test all token types and line continuation.
+// Only features up to Phase 7 are used (no strings or floats yet).
+
+let a = 42          // integer
+let b = 0x2A        // hex integer
+let c = 0b101010    // binary integer
+let d = 1_000       // underscore in integer
+let h = a + b - c * d   // operators
+
+// Line continuation:
+let long = 1 +
+           2 +
+           3
+println(long)   // should print 6

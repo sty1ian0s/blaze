@@ -1,0 +1,5 @@
+// EXPECTED: exit_code=0
+// Phase 3: Code generation – empty program.
+// Already tested by phase0.
+// This test ensures codegen works with a simple program.
+println(123)

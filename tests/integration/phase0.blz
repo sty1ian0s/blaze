@@ -1,0 +1,2 @@
+// EXPECTED: exit_code=0
+// Phase 0: Empty program – just ensures compiler produces working executable.
